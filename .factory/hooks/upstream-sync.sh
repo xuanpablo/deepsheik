@@ -27,10 +27,13 @@ git remote get-url "$UPSTREAM_REMOTE" >/dev/null 2>&1 || {
 
 git fetch --prune "$UPSTREAM_REMOTE" "$UPSTREAM_BRANCH"
 
-# Fast-forward only: ancestor check, then push the remote-tracking ref onto
-# the local branch. Never a merge commit, never a force.
+# Fast-forward only: ancestor check, then move the LOCAL branch with
+# --ff-only before pushing it. The local checkout is never bypassed — pushing
+# a remote-tracking ref straight to origin would leave this working tree
+# behind, which is exactly the divergence this script exists to prevent.
 if git merge-base --is-ancestor "$LOCAL_BRANCH" "refs/remotes/$UPSTREAM_REMOTE/$UPSTREAM_BRANCH"; then
-  git push origin "refs/remotes/$UPSTREAM_REMOTE/$UPSTREAM_BRANCH:refs/heads/$LOCAL_BRANCH"
+  git merge --ff-only "refs/remotes/$UPSTREAM_REMOTE/$UPSTREAM_BRANCH"
+  git push origin "refs/heads/$LOCAL_BRANCH"
   echo "upstream-sync: $LOCAL_BRANCH fast-forwarded to $UPSTREAM_REMOTE/$UPSTREAM_BRANCH"
 else
   echo "upstream-sync: '$LOCAL_BRANCH' diverged from $UPSTREAM_REMOTE/$UPSTREAM_BRANCH — leaving it untouched" >&2
