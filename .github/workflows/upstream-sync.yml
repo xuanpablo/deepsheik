@@ -1,0 +1,75 @@
+name: Upstream sync
+
+on:
+  schedule:
+    # Every 30 minutes, unattended. Same implementation as the SessionStart
+    # hook — this is the headless trigger, not a second mechanism.
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # Deployment-varying tunables are validated configuration, not hardcoded
+  # script constants: unset values fail loud with the reason on stderr.
+  UPSTREAM_URL: ${{ vars.UPSTREAM_URL }}
+  UPSTREAM_REMOTE: upstream
+  UPSTREAM_BRANCH: master
+  LOCAL_BRANCH: master
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      # persist-credentials stays true: the checkout action's auth header is
+      # the push credential, so no token is ever written into a remote URL.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: master
+
+      - name: Configure upstream
+        run: |
+          set -euo pipefail
+          if [ -z "$UPSTREAM_URL" ]; then
+            echo "UPSTREAM_URL is not configured — set it in repository variables" >&2
+            exit 2
+          fi
+          git remote add upstream "$UPSTREAM_URL" || true  # idempotent: a re-added remote is kept, not an error
+
+      - name: Fast-forward to upstream (never rewrites history)
+        id: ff
+        run: |
+          set -euo pipefail
+          git fetch --prune upstream "$UPSTREAM_BRANCH"
+          if git merge-base --is-ancestor "$LOCAL_BRANCH" "refs/remotes/upstream/$UPSTREAM_BRANCH"; then
+            git merge --ff-only "refs/remotes/upstream/$UPSTREAM_BRANCH"
+          else
+            echo "result=diverged" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push fast-forward (same ref, no rewrite)
+        if: steps.ff.outputs.result != 'diverged'
+        run: |
+          set -euo pipefail
+          git push origin "refs/remotes/upstream/${UPSTREAM_BRANCH}:refs/heads/${LOCAL_BRANCH}"
+
+      - name: Contingency — divergence alert
+        if: failure() && steps.ff.outputs.result == 'diverged'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "Upstream sync: master diverged from upstream/master" \
+            --body "The scheduled upstream sync could not fast-forward. Merge upstream/${UPSTREAM_BRANCH} manually; the automation never rewrites history." \
+            --label upstream-sync
+          exit 1
