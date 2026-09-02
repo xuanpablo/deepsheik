@@ -31,7 +31,10 @@ git fetch --prune "$UPSTREAM_REMOTE" "$UPSTREAM_BRANCH"
 # --ff-only before pushing it. The local checkout is never bypassed — pushing
 # a remote-tracking ref straight to origin would leave this working tree
 # behind, which is exactly the divergence this script exists to prevent.
-if git merge-base --is-ancestor "$LOCAL_BRANCH" "refs/remotes/$UPSTREAM_REMOTE/$UPSTREAM_BRANCH"; then
+if git merge-base --is-ancestor "refs/remotes/$UPSTREAM_REMOTE/$UPSTREAM_BRANCH" "$LOCAL_BRANCH"; then
+  # Local is already at or ahead of upstream: nothing to pull.
+  echo "upstream-sync: $LOCAL_BRANCH already contains $UPSTREAM_REMOTE/$UPSTREAM_BRANCH"
+elif git merge-base --is-ancestor "$LOCAL_BRANCH" "refs/remotes/$UPSTREAM_REMOTE/$UPSTREAM_BRANCH"; then
   git merge --ff-only "refs/remotes/$UPSTREAM_REMOTE/$UPSTREAM_BRANCH"
   git push origin "refs/heads/$LOCAL_BRANCH"
   echo "upstream-sync: $LOCAL_BRANCH fast-forwarded to $UPSTREAM_REMOTE/$UPSTREAM_BRANCH"
