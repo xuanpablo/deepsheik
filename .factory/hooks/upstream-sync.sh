@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# Fast-forward this fork to its upstream without user interaction.
+# Sync this fork's checkout with its upstream without user interaction.
 #
-# Triggered by the SessionStart hook in ../settings.json on every droid
-# session, and by .github/workflows/upstream-sync.yml on a schedule — one
-# implementation, two triggers.
-#
-# Fast-forward only. A diverged local branch is a contingency, never bypassed:
-# the script stops loudly and the caller alerts instead of rewriting history.
+# Runs from the SessionStart hook in ../settings.json on every droid
+# session. Pull only: the checkout moves forward, nothing is pushed to any
+# remote. Fast-forward when possible; rebase local commits on top of
+# upstream when the branches diverged.
 
 set -euo pipefail
 
@@ -18,28 +16,36 @@ UPSTREAM_BRANCH="${UPSTREAM_BRANCH:-master}"
 LOCAL_BRANCH="${LOCAL_BRANCH:-master}"
 
 git remote get-url "$UPSTREAM_REMOTE" >/dev/null 2>&1 || {
-  # Empty catch: a missing upstream remote is the loud misconfiguration the
-  # settings layer must surface; the sync cannot proceed past it, so this
-  # swallows nothing — it exits with the reason on stderr.
+  # Missing upstream remote: exit 2 with the reason instead of guessing a URL.
   echo "upstream-sync: no '$UPSTREAM_REMOTE' remote configured — refusing to guess" >&2
   exit 2
 }
 
+if [ "$(git symbolic-ref --quiet --short HEAD)" != "$LOCAL_BRANCH" ]; then
+  # git merge and git rebase both act on HEAD, so a different checked-out
+  # branch must stop the sync rather than move a branch nobody asked about.
+  echo "upstream-sync: HEAD is not on '$LOCAL_BRANCH' — leaving the checkout untouched" >&2
+  exit 2
+fi
+
 git fetch --prune "$UPSTREAM_REMOTE" "$UPSTREAM_BRANCH"
 
-# Fast-forward only: ancestor check, then move the LOCAL branch with
-# --ff-only before pushing it. The local checkout is never bypassed — pushing
-# a remote-tracking ref straight to origin would leave this working tree
-# behind, which is exactly the divergence this script exists to prevent.
 if git merge-base --is-ancestor "refs/remotes/$UPSTREAM_REMOTE/$UPSTREAM_BRANCH" "$LOCAL_BRANCH"; then
-  # Local is already at or ahead of upstream: nothing to pull.
   echo "upstream-sync: $LOCAL_BRANCH already contains $UPSTREAM_REMOTE/$UPSTREAM_BRANCH"
 elif git merge-base --is-ancestor "$LOCAL_BRANCH" "refs/remotes/$UPSTREAM_REMOTE/$UPSTREAM_BRANCH"; then
   git merge --ff-only "refs/remotes/$UPSTREAM_REMOTE/$UPSTREAM_BRANCH"
-  git push origin "refs/heads/$LOCAL_BRANCH"
   echo "upstream-sync: $LOCAL_BRANCH fast-forwarded to $UPSTREAM_REMOTE/$UPSTREAM_BRANCH"
 else
-  echo "upstream-sync: '$LOCAL_BRANCH' diverged from $UPSTREAM_REMOTE/$UPSTREAM_BRANCH — leaving it untouched" >&2
-  echo "upstream-sync: contingency: merge upstream/$UPSTREAM_BRANCH manually or re-clone; this script never rewrites history" >&2
-  exit 3
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "upstream-sync: uncommitted changes would be rebased over — commit or stash them first" >&2
+    exit 2
+  fi
+  if ! git rebase "refs/remotes/$UPSTREAM_REMOTE/$UPSTREAM_BRANCH"; then
+    # Abort restores the pre-rebase state when a rebase is in progress; a
+    # rebase that failed before starting is already in that state.
+    git rebase --abort >/dev/null 2>&1 || true
+    echo "upstream-sync: rebase onto $UPSTREAM_REMOTE/$UPSTREAM_BRANCH had conflicts — resolve them manually" >&2
+    exit 3
+  fi
+  echo "upstream-sync: $LOCAL_BRANCH rebased onto $UPSTREAM_REMOTE/$UPSTREAM_BRANCH"
 fi

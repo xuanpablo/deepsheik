@@ -4,13 +4,13 @@ class: process
 
 # Scheduled upstream sync
 
-Decided to automate the pull rather than hand-rolling a merge-forward script: a scheduled workflow owns it, the SessionStart hook and the cron trigger share one implementation, and a diverged branch fails loud instead of force-pushing.
+Decided to automate the pull rather than hand-rolling a merge-forward script: a scheduled workflow pushes the fast-forward, the SessionStart hook syncs the local checkout only, and a diverged branch fails loud instead of force-pushing.
 
 ## What shipped
 
-- `.factory/settings.json` — project-scope SessionStart hook; the script is the single sync implementation.
-- `.factory/hooks/upstream-sync.sh` — fast-forward only; divergence never bypasses.
-- `.github/workflows/upstream-sync.yml` — scheduled, unattended trigger.
+- `.factory/settings.json` — project-scope SessionStart hook; runs the sync script on every droid session.
+- `.factory/hooks/upstream-sync.sh` — pull only: fast-forward when behind, rebase local commits onto upstream when diverged; it never pushes to a remote.
+- `.github/workflows/upstream-sync.yml` — scheduled, unattended trigger; this half pushes the fast-forward to origin.
 
 ## What was rejected
 
